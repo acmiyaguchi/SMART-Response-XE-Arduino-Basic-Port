@@ -105,7 +105,7 @@ byte SymKeys[] =       {'!', '2', '3', '$', '%', '6', '\'', '\"', '(', ')',
 //
 // Power on the LCD
 //
-const char powerup[] PROGMEM = {
+const unsigned char powerup[] PROGMEM = {
   1, 0x01, // soft reset
   99, 120, // 120ms delay
   1, 0x11,  // sleep out
