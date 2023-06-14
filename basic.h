@@ -141,7 +141,7 @@ typedef struct {
 ForNextData;
 
 typedef struct {
-  char *token;
+  const char *token;
   uint8_t format;
 }
 TokenTableEntry;

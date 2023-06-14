@@ -66,7 +66,6 @@
 
 #include "host.h"
 #include "basic.h"
-#include "SmartResponseXEa.h"
 
 #include <avr/pgmspace.h>
 
@@ -207,7 +206,7 @@ void printTokens(unsigned char *p) {
 
 void listProg(uint16_t first, uint16_t last) {
   unsigned char *p = &mem[0];
-  boolean stopList = false;
+  bool stopList = false;
   int curLine = 0;
   char kPress;
 
@@ -219,9 +218,9 @@ void listProg(uint16_t first, uint16_t last) {
       printTokens(p + 4);
       host_newLine();
       curLine++;
-      if (curLine == 7 & !stopList) {
+      if ((curLine == 7) & !stopList) {
         host_showBuffer();
-        while (!(kPress = SRXEGetKey())) {}
+        while (!(kPress = host_getKey())) {}
         if (kPress == ' ') stopList = true;
         curLine = 0;
       }
@@ -545,7 +544,6 @@ int createArray(char *name, int isString) {
   bytesNeeded += nameLen + 1;	// name
   bytesNeeded += 2;		// num dims
   int numElements = 1;
-  int i = 0;
   int numDims = (int)stackPopNum();
   // keep the current stack position, since we'll need to pop these values again
   int oldSTACKEND = sysSTACKEND;
@@ -1527,7 +1525,7 @@ int parse_PAUSE() {
     long ms = (long)stackPopNum();
     if (ms < 0)
       return ERROR_BAD_PARAMETER;
-    host_sleep(ms);
+    host_delay(ms);
   }
   return 0;
 }
@@ -1866,15 +1864,13 @@ int parseSimpleCmd() {
         host_showBuffer();
         break;
       case TOKEN_BYE:
-        SRXESleep();
+        host_sleep();
         break;
       case TOKEN_BATT:
         parseBatt();
         break;
       case TOKEN_DIR:
-#if EXTERNAL_EEPROM
-        host_directoryExtEEPROM();
-#endif
+        // TODO: list files
         break;
     }
   }

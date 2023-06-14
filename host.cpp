@@ -1,49 +1,51 @@
 #include "host.h"
 #include "basic.h"
-#include <avr/pgmspace.h>
-#include "SmartResponseXEa.h"
-#include <EEPROM.h>
+#include <Arduino.h>
+#include "_avr_includes.h"
+#include "_srxe_includes.h"
+
+// there is something weird going on in the shared srxecore library regarding
+// string functionality here
+#define snprintf snprintf
 
 #define PS2_DELETE 2 // Since no PS2 keyboard, define delete for SMART device (pad left)
 #define PS2_ENTER 0xd // This is the SMART delete key but it is the natural enter key
 #define PS2_ESC 0x1b // Square root key
 
-int timer1_counter;
+static char screenBuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
+static char lineDirty[SCREEN_HEIGHT];
+static int curX = 0, curY = 0;
+static volatile char flash = 0, redraw = 0;
+static char inputMode = 0;
+static char inkeyChar = 0;
+static char inkeyLast = 0;
 
-char screenBuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
-char lineDirty[SCREEN_HEIGHT];
-int curX = 0, curY = 0;
-volatile char flash = 0, redraw = 0;
-char inputMode = 0;
-char inkeyChar = 0;
-char inkeyLast = 0;
-
-const char bytesFreeStr[] PROGMEM = "bytes free";
-
-void initTimer() {
-  noInterrupts();           // disable all interrupts
-  TCCR1A = 0;
-  TCCR1B = 0;
-  timer1_counter = 34286;   // preload timer 65536-16MHz/256/2Hz
-  TCNT1 = timer1_counter;   // preload timer
-  TCCR1B |= (1 << CS12);    // 256 prescaler
-  TIMSK1 |= (1 << TOIE1);   // enable timer overflow interrupt
-  interrupts();             // enable all interrupts
-}
-
-ISR(TIMER1_OVF_vect)        // interrupt service routine
-{
-  TCNT1 = timer1_counter;   // preload timer
-  flash = !flash;
-  redraw = 1;
-}
+static const char bytesFreeStr[] PROGMEM = "bytes free";
 
 void host_init() {
-  SRXEFill(0);
-  initTimer();
+  clockInit();
+  powerInit();
+  rfInit(1);    // turn on the radio to seed pseudo random number generator
+  randomInit();
+  rfTerm();     // now we can turn off the radio since random is initialized
+  kbdInit();
+  eepromInit();
+  flashInit();
+  lcdInit();
+
+  // initialize the screen
+  lcdClearScreen();
+  lcdFontSet(FONT2);
+  lcdColorSet(LCD_BLACK, LCD_WHITE);
 }
 
-void host_sleep(long ms) {
+void host_sleep() {
+  lcdSleep();
+  powerSleep();
+  lcdWake();
+}
+
+void host_delay(long ms) {
   delay(ms);
 }
 
@@ -80,15 +82,15 @@ void host_moveCursor(int x, int y) {
 }
 
 void host_showBuffer() {
+  char buf[3];
   for (int y = 0; y < SCREEN_HEIGHT; y++) {
     if (lineDirty[y] || (inputMode && y == curY)) {
       for (int x = 0; x < SCREEN_WIDTH; x++) {
         char c = screenBuffer[y * SCREEN_WIDTH + x];
         if (c < 32) c = ' ';
         if (x == curX && y == curY && inputMode && flash) c = '_';
-        char buf[3];
         snprintf(buf, sizeof(buf) - 1, "%c", c);
-        SRXEWriteString(x * 12, y * 16, buf, FONT_MEDIUM, 3, 0);
+        lcdPutStringAtWith((const char*)buf, x * 12, y * 16, FONT2, 3, 0);
       }
       lineDirty[y] = 0;
     }
@@ -208,7 +210,7 @@ char *host_readLine() {
 
   bool done = false;
   while (!done) {
-    while (char c = SRXEGetKey()) {
+    while (char c = kbdGetKey()) {
       // read the next key
       lineDirty[pos / SCREEN_WIDTH] = 1;
       if (c >= 32 && c <= 126)
@@ -253,7 +255,7 @@ char host_getKey() {
 }
 
 bool host_ESCPressed() {
-  while (inkeyChar = SRXEGetKey()) {
+  while ((inkeyChar = kbdGetKey())) {
     if (inkeyChar != 0) inkeyLast = inkeyChar;
     // read the next key
     if (inkeyChar == PS2_ESC)
@@ -271,32 +273,31 @@ void host_outputFreeMem(unsigned int val)
 }
 
 void host_saveProgram(bool autoexec) {
-  EEPROM.write(0, autoexec ? MAGIC_AUTORUN_NUMBER : 0x00);
-  EEPROM.write(1, sysPROGEND & 0xFF);
-  EEPROM.write(2, (sysPROGEND >> 8) & 0xFF);
+  eepromWriteByte(0, autoexec ? MAGIC_AUTORUN_NUMBER : 0x00);
+  eepromWriteByte(1, sysPROGEND & 0xFF);
+  eepromWriteByte(2, (sysPROGEND >> 8) & 0xFF);
   for (int i = 0; i < sysPROGEND; i++)
-    EEPROM.write(3 + i, mem[i]);
+    eepromWriteByte(3 + i, mem[i]);
 }
 
 void host_loadProgram() {
   //  skip the autorun byte
-  sysPROGEND = EEPROM.read(1) | (EEPROM.read(2) << 8);
+  sysPROGEND = eepromReadByte(1) | (eepromReadByte(2) << 8);
   for (int i = 0; i < sysPROGEND; i++)
-    mem[i] = EEPROM.read(i + 3);
+    mem[i] = eepromReadByte(i + 3);
 }
 
 // Clear a 12k block to memory to write to. Each mem block holds
 // an entire program memory. memNum is 0-9.
 void clearMem(short int memNum) {
   uint32_t baseAdd = memNum * 12288ul;
-  SRXEFlashEraseSector(baseAdd, 1);
-  SRXEFlashEraseSector(baseAdd + 0x001000ul, 1);
-  SRXEFlashEraseSector(baseAdd + 0x002000ul, 1);
+  flashEraseSector(baseAdd, 1);
+  flashEraseSector(baseAdd + 0x001000ul, 1);
+  flashEraseSector(baseAdd + 0x002000ul, 1);
 }
 
 void host_saveMem(short int mNum) {
   uint8_t memSend[256]; // Array holding the 256 byte packet to save
-  int retn;
   uint32_t  mempos = mNum * 12288ul; // Start address of selected memory slot
   clearMem(mNum);
 
@@ -305,25 +306,30 @@ void host_saveMem(short int mNum) {
     for (int j = 0; j < 256; j++) {
       memSend[j] = mem[i * 256 + j];
     }
-    retn = SRXEFlashWritePage(mempos + i * 256, memSend);
+    flashWritePage(mempos + i * 256, memSend);
   }
   // Save the sysPROGEND as the first two bytes
   memSend[0] = sysPROGEND & 0xFF;
   memSend[1] = (sysPROGEND >> 8) & 0xFF;
-  SRXEFlashWritePage(mempos + 8192, memSend);
+  flashWritePage(mempos + 8192, memSend);
 
   host_outputInt(sysPROGEND);
 }
 
-void host_loadMem(short int mNum) {
+uint8_t flashReadByte(uint32_t address) {
+  uint8_t data;
+  SRXEFlashRead(address, &data, 1);
+  return data;
+}
 
+void host_loadMem(short int mNum) {
   uint32_t  mempos = mNum * 12288ul; // Start address of selected memory slot
-  uint16_t dig1 = SRXEFlashReadByte(mempos); // Solves problem of misread on initial startup
-  dig1 = SRXEFlashReadByte(mempos + 8192);
-  uint16_t dig2 = SRXEFlashReadByte(mempos + 8193);
+  uint16_t dig1 = flashReadByte(mempos); // Solves problem of misread on initial startup
+  dig1 = flashReadByte(mempos + 8192);
+  uint16_t dig2 = flashReadByte(mempos + 8193);
   sysPROGEND = dig1 | (dig2 << 8); // Retrieve sysPROGEND
   for (int i = 0; i < sysPROGEND; i++) {
-    mem[i] = SRXEFlashReadByte(mempos + i);
+    mem[i] = flashReadByte(mempos + i);
   }
   host_outputInt(sysPROGEND);
 }
