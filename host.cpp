@@ -8,10 +8,7 @@
 // string functionality here
 #define snprintf snprintf
 
-#define PS2_DELETE 2 // Since no PS2 keyboard, define delete for SMART device (pad left)
-#define PS2_ENTER 0xd // This is the SMART delete key but it is the natural enter key
-#define PS2_ESC 0x1b // Square root key
-
+static int timer1_counter;
 static char screenBuffer[SCREEN_WIDTH * SCREEN_HEIGHT];
 static char lineDirty[SCREEN_HEIGHT];
 static int curX = 0, curY = 0;
@@ -19,10 +16,30 @@ static volatile char flash = 0, redraw = 0;
 static char inputMode = 0;
 static char inkeyChar = 0;
 static char inkeyLast = 0;
+static uint8_t fontWidth = 0, fontHeight = 0;
 
 static const char bytesFreeStr[] PROGMEM = "bytes free";
 
+void initTimer() {
+  noInterrupts();           // disable all interrupts
+  TCCR1A = 0;
+  TCCR1B = 0;
+  timer1_counter = 34286;   // preload timer 65536-16MHz/256/2Hz
+  TCNT1 = timer1_counter;   // preload timer
+  TCCR1B |= (1 << CS12);    // 256 prescaler
+  TIMSK1 |= (1 << TOIE1);   // enable timer overflow interrupt
+  interrupts();             // enable all interrupts
+}
+
+ISR(TIMER1_OVF_vect)        // interrupt service routine
+{
+  TCNT1 = timer1_counter;   // preload timer
+  flash = !flash;
+  redraw = 1;
+}
+
 void host_init() {
+  initTimer();
   clockInit();
   powerInit();
   rfInit(1);    // turn on the radio to seed pseudo random number generator
@@ -35,8 +52,18 @@ void host_init() {
 
   // initialize the screen
   lcdClearScreen();
-  lcdFontSet(FONT2);
+  lcdFontConfig(
+    FONT1,
+    font_6X8_P,
+    FONT_6X8_WIDTH,
+    FONT_6X8_HEIGHT,
+    FONT_6X8_WIDTHBYTES,
+    FONT_6X8_CHARBYTES,
+    FONT_DOUBLED
+  );
   lcdColorSet(LCD_BLACK, LCD_WHITE);
+  fontWidth = lcdFontWidthGet();
+  fontHeight = lcdFontHeightGet();
 }
 
 void host_sleep() {
@@ -90,7 +117,7 @@ void host_showBuffer() {
         if (c < 32) c = ' ';
         if (x == curX && y == curY && inputMode && flash) c = '_';
         snprintf(buf, sizeof(buf) - 1, "%c", c);
-        lcdPutStringAtWith((const char*)buf, x * 12, y * 16, FONT2, 3, 0);
+        lcdPutStringAt((const char*)buf, x*fontWidth, y*fontHeight);
       }
       lineDirty[y] = 0;
     }
@@ -215,9 +242,9 @@ char *host_readLine() {
       lineDirty[pos / SCREEN_WIDTH] = 1;
       if (c >= 32 && c <= 126)
         screenBuffer[pos++] = c;
-      else if (c == PS2_DELETE && pos > startPos)
+      else if (c == KEY_DEL && pos > startPos)
         screenBuffer[--pos] = 0;
-      else if (c == PS2_ENTER)
+      else if (c == KEY_ENTER)
         done = true;
       curX = pos % SCREEN_WIDTH;
       curY = pos / SCREEN_WIDTH;
@@ -258,7 +285,7 @@ bool host_ESCPressed() {
   while ((inkeyChar = kbdGetKey())) {
     if (inkeyChar != 0) inkeyLast = inkeyChar;
     // read the next key
-    if (inkeyChar == PS2_ESC)
+    if (inkeyChar == KEY_ESC)
       return true;
   }
   return false;
