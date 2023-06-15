@@ -92,6 +92,10 @@ void host_pinMode(int pin, int mode) {
   pinMode(pin, mode);
 }
 
+int host_millis() {
+  return millis();
+}
+
 void host_cls() {
   memset(screenBuffer, 32, SCREEN_WIDTH * SCREEN_HEIGHT);
   memset(lineDirty, 1, SCREEN_HEIGHT);

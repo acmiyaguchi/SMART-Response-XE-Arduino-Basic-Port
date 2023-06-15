@@ -148,7 +148,8 @@ PROGMEM const TokenTableEntry tokenTable[] = {
   {"SAVE", TKN_FMT_POST}, {"LOAD", TKN_FMT_POST}, {"PINREAD", 1}, {"ANALOGRD", 1},
   {"DIR", TKN_FMT_POST}, {"DELETE", TKN_FMT_POST},
   {"SIN", 1}, {"COS", 1}, {"ABS", 1}, {"LN", 1}, {"EXP", 1}, {"SQR", 1},
-  {"SGN", 1}, {"BYE", TKN_FMT_POST}, {"MSAVE", TKN_FMT_POST}, {"MLOAD", TKN_FMT_POST}, {"BATT", 0}, {"ATN", 1}
+  {"SGN", 1}, {"BYE", TKN_FMT_POST}, {"MSAVE", TKN_FMT_POST}, {"MLOAD", TKN_FMT_POST}, {"BATT", 0}, {"ATN", 1},
+  {"MILLIS", 0},
 };
 
 
@@ -1277,6 +1278,12 @@ int parse_INKEY() {
   return TYPE_NUMBER;
 }
 
+int parseMillis() {
+  getNextToken();
+  if (executeMode && !stackPushNum((float)host_millis())) return ERROR_OUT_OF_MEMORY;
+  return TYPE_NUMBER;
+}
+
 int parseUnaryNumExp()
 {
   int op = curToken;
@@ -1317,6 +1324,8 @@ int parsePrimary() {
       return parseBatt();
     case TOKEN_INKEY:
       return parse_INKEY();
+    case TOKEN_MILLIS:
+      return parseMillis();
 
     // unary ops
     case TOKEN_MINUS:
@@ -1868,6 +1877,9 @@ int parseSimpleCmd() {
         break;
       case TOKEN_BATT:
         parseBatt();
+        break;
+      case TOKEN_MILLIS:
+        parseMillis();
         break;
       case TOKEN_DIR:
         // TODO: list files
